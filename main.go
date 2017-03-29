@@ -24,6 +24,13 @@ type UserWrapper struct {
 	Error error
 }
 
+type Page struct {
+	Data []User `json:"data"`
+	Meta struct {
+		HasNext bool `json:"has_next"`
+	} `json:"meta"`
+}
+
 const baseURL = "https://www.italki.com"
 
 func main() {
@@ -38,52 +45,50 @@ func main() {
 
 func getAllUsers() ([]User, error) {
 	userChan := make(chan UserWrapper)
-	count := 1
-	for {
-		if count <= 59 {
-			go getUsers(count, userChan)
-			count = count + 1
-		} else {
-			break
-		}
-	}
+	go getUsers(1, userChan)
 
 	users := []User{}
 	for user := range userChan {
 		if user.Error != nil {
 			return users, nil
 		}
+		users = append(users, user.Users...)
 		if user.Done {
 			break
 		}
-		fmt.Println("----")
-		fmt.Println(len(users))
-		fmt.Println("----")
-		users = append(users, user.Users...)
 	}
 
 	return users, nil
 }
 
-func getUsers(page int, userChan chan UserWrapper) {
-	partnerURL := fmt.Sprintf("%s/api/partner?_r=1490718821186&city=&country=CL&gender=1&hl=en-US&is_native=1&learn=english&page=%d&speak=spanish", baseURL, page)
+/*
+ 1. start at page 1.
+ 2. get users
+ 3. check if 'has_next'
+ 4. if 'has_next', recursively get next page on new goroutine
+*/
+func getUsers(index int, userChan chan UserWrapper) {
+	partnerURL := fmt.Sprintf("%s/api/partner?_r=1490718821186&city=&country=CL&gender=1&hl=en-US&is_native=1&learn=english&page=%d&speak=spanish", baseURL, index)
 	resp, err := http.Get(partnerURL)
 	if err != nil {
 		userChan <- UserWrapper{Error: err}
 	}
+
 	bytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		userChan <- UserWrapper{Error: err}
 	}
 
-	type wrapper struct {
-		Data []User `json:"data"`
-	}
-
-	var wrappedUsers wrapper
-	err = json.Unmarshal(bytes, &wrappedUsers)
+	var page Page
+	err = json.Unmarshal(bytes, &page)
 	if err != nil {
 		userChan <- UserWrapper{Error: err}
 	}
-	userChan <- UserWrapper{Users: wrappedUsers.Data}
+	fmt.Print(".")
+	userChan <- UserWrapper{Users: page.Data}
+	if page.Meta.HasNext {
+		go getUsers(index+1, userChan)
+	} else {
+		userChan <- UserWrapper{Done: true}
+	}
 }
